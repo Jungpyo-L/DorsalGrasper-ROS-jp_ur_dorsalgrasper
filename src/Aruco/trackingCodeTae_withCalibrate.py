@@ -77,12 +77,11 @@ def augmentArucoBasic(bbox, id, img, drawId=True):
 
 def main():
     size_of_marker =  0.01 # side lenght of the marker in meter    
-    datadir = os.path.expanduser('~') + "/catkin_ws/src/jp_ur_experiment/src/Aruco/workdir/"
+    datadir = os.path.expanduser('~') + "/catkin_ws/src/jp_ur_dorsalgrasper/src/Aruco/workdir/"
     
     # Load data (deserialize)
     with open(datadir + 'calibMtx.pickle', 'rb') as handle:
-        loaded_data = pickle.load(handle)
-
+        loaded_data = pickle.load(handle, encoding='latin1') # jp: encoding='latin1' is necessary for python 3 when open python 2's pickle file
     mtx = loaded_data['mtx']
     dist = loaded_data['dist']
     print(mtx)

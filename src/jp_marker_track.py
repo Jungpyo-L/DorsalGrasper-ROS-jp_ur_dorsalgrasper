@@ -31,7 +31,7 @@ aruco_dict = cv2.aruco.Dictionary_get(cv2.aruco.DICT_4X4_50)
 def callback(data):
     global CMD_in        
     CMD_in = data.cmdInput
-    print CMD_in
+    print(CMD_in)
 
 
 def findArucoMarkers(img, markerSize=4, totalMarkers=50, draw=True):
@@ -96,34 +96,36 @@ def draw_axis(frame, camera_matrix, dist_coeff, board, verbose=True):
 
     return [p_rvec, p_tvec]    
 
-# draw axis for single markers
-def draw_axis_single(frame, camera_matrix, dist_coeff, i, verbose=True):
+# draw axis for single markers (JP)
+def draw_axis_single(frame, camera_matrix, dist_coeff, verbose=True):
     corners, ids, rejected_points = cv2.aruco.detectMarkers(frame, aruco_dict)
-    
     if corners is None or ids is None:
         return None
     if len(corners) != len(ids) or len(corners) == 0:
         return None
-    if ids is not None:
-        if i in ids == False:
-            return None
-        else:
-            index = np.where(ids == 0)[0]
-
-
+    
     try:
-        rvec, tvec, markerPoints = aruco.estimatePoseSingleMarkers(corners[index], 0.01, camera_matrix, dist_coeff) 
+        numMarkersGroup = 5
+        rvec, tvec, markerPoints = aruco.estimatePoseSingleMarkers(corners, 0.01, camera_matrix, dist_coeff) 
 
+        tvecs = np.zeros((numMarkersGroup,3))
+        rvecs = np.zeros((numMarkersGroup,3))
+        
         if rvec is None or tvec is None:
             return None
         if np.isnan(rvec).any() or np.isnan(tvec).any():
             return None
-        cv2.aruco.drawAxis(frame,
-                        camera_matrix,
-                        dist_coeff,
-                        rvec,
-                        tvec,
-                        0.01)
+
+        if np.all(corners is not None): 
+            for i in range(0, len(corners)):  # Iterate in markers
+                cv2.drawFrameAxes(frame, camera_matrix, dist_coeff, rvec[i], tvec[i], 0.01)  # Draw Axis
+        
+
+        for i in range(0, numMarkersGroup):
+            if i in ids:
+                index = np.where(i == ids)[0][0]
+                rvecs[i,:] = rvec[index,0].reshape(3)
+                tvecs[i,:] = tvec[index,0].reshape(3)
 
     except cv2.error:
         return None
@@ -133,7 +135,7 @@ def draw_axis_single(frame, camera_matrix, dist_coeff, i, verbose=True):
         print('Rotation    : {0}'.format(rvec))
         print('Distance from camera: {0} m'.format(np.linalg.norm(tvec)))
 
-    return [rvec, tvec]    
+    return rvecs, tvecs
 
 def main():
     global currState
@@ -141,33 +143,23 @@ def main():
     
     size_of_marker =  0.010 # side lenght of the marker in meter    
 
-    datadir = os.path.expanduser('~') + "/catkin_ws/src/jp_ur_experiment/src/Aruco/workdir/"
+    datadir = os.path.expanduser('~') + "/catkin_ws/src/jp_ur_dorsalgrasper/src/Aruco/workdir/"
     
     # Load data (deserialize)
     with open(datadir + 'calibMtx.pickle', 'rb') as handle:
-        loaded_data = pickle.load(handle)
+        loaded_data = pickle.load(handle, encoding='latin1') # jp: encoding='latin1' is necessary for python 3 when open python 2's pickle file
 
     mtx = loaded_data['mtx']
     dist = loaded_data['dist']
-    print mtx
+    print(mtx)
 
     
-    print "here"
+    print("here")
 
     rospy.init_node('jp_marker_track')
     pub = rospy.Publisher('MarkerPacket', MarkerPacket, queue_size=10)
     rospy.Subscriber("cmdPacket",cmdPacket, callback)
     msg = MarkerPacket()
-
-    #Set the boards and save them. 
-    board = []
-    board.append(aruco.GridBoard_create(1,1,0.01,0.005,aruco_dict,firstMarker=0)) #refpoint: wrist pivot point
-    board.append(aruco.GridBoard_create(1,1,0.01,0.005,aruco_dict,firstMarker=1)) #object
-    board.append(aruco.GridBoard_create(1,1,0.01,0.005,aruco_dict,firstMarker=2)) #first phalanx
-    board.append(aruco.GridBoard_create(1,1,0.01,0.005,aruco_dict,firstMarker=3)) #second phalanx
-    board.append(aruco.GridBoard_create(1,1,0.01,0.005,aruco_dict,firstMarker=4)) #third phalanx
-    board.append(aruco.GridBoard_create(1,1,0.01,0.005,aruco_dict,firstMarker=5)) #forth phalanx
-
 
     while not rospy.is_shutdown():
         
@@ -192,7 +184,6 @@ def main():
                 result = cv2.VideoWriter(ResultSavingDirectory + '/tmpFile.avi',cv2.VideoWriter_fourcc(*'MJPG'),30, size)
 
                 recordFlag = False
-
                 while not CMD_in == IDLE_CMD and not rospy.is_shutdown():
                     try:
                         if CMD_in == RECORD_CMD:
@@ -201,22 +192,14 @@ def main():
 
                         success, frame = cap.read()
 
-                        numMarkersGroup = 6
-
-                        tvecs = np.zeros((numMarkersGroup,3))
-                        rvecs = np.zeros((numMarkersGroup,3))
-
-                        for i in range(0,numMarkersGroup):
-                            output = draw_axis_single(frame, mtx, dist, i, False)
-                            if output is not None:                                
-                                rvecs[i,:] = output[0].reshape(3)
-                                tvecs[i,:] = output[1].reshape(3)
-                        
+                        rvecs, tvecs = draw_axis_single(frame, mtx, dist, False)
                         frame = cv2.undistort(src = frame, cameraMatrix = mtx, distCoeffs = dist)
-                        
-                        msg.data = np.concatenate((np.reshape(tvecs, (1,3*numMarkersGroup)), np.reshape(rvecs, (1,3*numMarkersGroup)) ), axis=1)[0,:]  
+
+                        # if draw_axis_single(frame, mtx, dist, False) is not None:
+                        msg.data = np.concatenate((np.reshape(tvecs, (1,3*5)), np.reshape(rvecs, (1,3*5)) ), axis=1)[0,:]
                         msg.header.stamp = rospy.Time.now()  
-                        pub.publish(msg)   
+                        pub.publish(msg)
+                        print(msg.data)
 
                         cv2.imshow("Image", frame)
                         cv2.waitKey(1) #gives delay of 1 milisecond
@@ -226,7 +209,7 @@ def main():
                             result.write(frame)
                         
                     except Exception as e:
-                     print "SensorComError: " + str(e)
+                     print("SensorComError: " + str(e))
                      pass
             
                 cap.release()
